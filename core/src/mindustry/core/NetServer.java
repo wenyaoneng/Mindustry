@@ -41,7 +41,7 @@ public class NetServer implements ApplicationListener{
     private static final Vec2 vector = new Vec2();
     private static final Rect viewport = new Rect();
     /** If a player goes away of their server-side coordinates by this distance, they get teleported back. */
-    private static final float correctDist = 16f;
+    private static final float correctDist = tilesize * 8f;
 
     public final Administration admins = new Administration();
     public final CommandHandler clientCommands = new CommandHandler("/");
@@ -422,7 +422,7 @@ public class NetServer implements ApplicationListener{
                         currentlyKicking[0] = session;
                     }
                 }else{
-                    player.sendMessage("[scarlet]No player[orange]'" + args[0] + "'[scarlet] found.");
+                    player.sendMessage("[scarlet]No player [orange]'" + args[0] + "'[scarlet] found.");
                 }
             }
         });
@@ -444,6 +444,11 @@ public class NetServer implements ApplicationListener{
 
                 if(currentlyKicking[0].target == player){
                     player.sendMessage("[scarlet]You can't vote on your own trial.");
+                    return;
+                }
+
+                if(currentlyKicking[0].target.team() != player.team()){
+                    player.sendMessage("[scarlet]You can't vote for other teams.");
                     return;
                 }
 
@@ -638,12 +643,12 @@ public class NetServer implements ApplicationListener{
             Unit unit = player.unit();
 
             long elapsed = Time.timeSinceMillis(con.lastReceivedClientTime);
-            float maxSpeed = ((player.unit().type.canBoost && player.unit().isFlying()) ? player.unit().type.boostMultiplier : 1f) * player.unit().speed();
+            float maxSpeed = unit.realSpeed();
             if(unit.isGrounded()){
                 maxSpeed *= unit.floorSpeedMultiplier();
             }
 
-            float maxMove = elapsed / 1000f * 60f * maxSpeed * 1.1f;
+            float maxMove = elapsed / 1000f * 60f * maxSpeed * 1.2f;
 
             //ignore the position if the player thinks they're dead, or the unit is wrong
             boolean ignorePosition = dead || unit.id != unitID;
