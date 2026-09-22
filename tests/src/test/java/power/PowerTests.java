@@ -1,18 +1,17 @@
 package power;
 
-import arc.*;
 import arc.math.*;
 import arc.util.*;
 import mindustry.*;
 import mindustry.core.*;
+import mindustry.gen.*;
 import mindustry.world.*;
-import mindustry.world.blocks.power.*;
 import mindustry.world.blocks.power.PowerGenerator.*;
-import mindustry.world.consumers.*;
+import mindustry.world.blocks.power.*;
 import org.junit.jupiter.api.*;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.junit.jupiter.api.DynamicTest.dynamicTest;
+import static org.junit.jupiter.api.DynamicTest.*;
 
 /**
  * Tests code related to the power system in general, but not specific blocks.
@@ -25,7 +24,6 @@ public class PowerTests extends PowerTestFixture{
 
     @BeforeAll
     static void init(){
-        Core.graphics = new FakeGraphics();
         Vars.state = new GameState();
     }
 
@@ -55,12 +53,14 @@ public class PowerTests extends PowerTestFixture{
 
         void simulateDirectConsumption(float producedPower, float requiredPower, float expectedSatisfaction, String parameterDescription){
             Tile producerTile = createFakeTile(0, 0, createFakeProducerBlock(producedPower));
-            producerTile.<GeneratorBuild>bc().productionEfficiency = 1f;
+            ((GeneratorBuild)producerTile.build).productionEfficiency = 1f;
             Tile directConsumerTile = createFakeTile(0, 1, createFakeDirectConsumer(requiredPower));
 
             PowerGraph powerGraph = new PowerGraph();
             powerGraph.add(producerTile.build);
             powerGraph.add(directConsumerTile.build);
+
+            for(Building build : powerGraph.all) build.updateConsumption();
 
             assertEquals(producedPower * Time.delta, powerGraph.getPowerProduced(), Mathf.FLOAT_ROUNDING_ERROR);
             assertEquals(requiredPower * Time.delta, powerGraph.getPowerNeeded(), Mathf.FLOAT_ROUNDING_ERROR);
@@ -95,7 +95,7 @@ public class PowerTests extends PowerTestFixture{
 
             if(producedPower > 0.0f){
                 Tile producerTile = createFakeTile(0, 0, createFakeProducerBlock(producedPower));
-                producerTile.<GeneratorBuild>bc().productionEfficiency = 1f;
+                ((GeneratorBuild)producerTile.build).productionEfficiency = 1f;
                 powerGraph.add(producerTile.build);
             }
             Tile directConsumerTile = null;
@@ -109,7 +109,10 @@ public class PowerTests extends PowerTestFixture{
 
             powerGraph.add(batteryTile.build);
 
+            for(Building build : powerGraph.all) build.updateConsumption();
+
             powerGraph.update();
+
             assertEquals(expectedBatteryCapacity / maxCapacity, batteryTile.build.power.status, Mathf.FLOAT_ROUNDING_ERROR, parameterDescription + ": Expected battery status did not match");
             if(directConsumerTile != null){
                 assertEquals(expectedSatisfaction, directConsumerTile.build.power.status, Mathf.FLOAT_ROUNDING_ERROR, parameterDescription + ": Satisfaction of direct consumer did not match");
@@ -120,7 +123,7 @@ public class PowerTests extends PowerTestFixture{
         @Test
         void directConsumptionStopsWithNoPower(){
             Tile producerTile = createFakeTile(0, 0, createFakeProducerBlock(10.0f));
-            producerTile.<GeneratorBuild>bc().productionEfficiency = 1.0f;
+            ((GeneratorBuild)producerTile.build).productionEfficiency = 1.0f;
             Tile consumerTile = createFakeTile(0, 1, createFakeDirectConsumer(5.0f));
 
             PowerGraph powerGraph = new PowerGraph();
@@ -130,14 +133,13 @@ public class PowerTests extends PowerTestFixture{
 
             assertEquals(1.0f, consumerTile.build.power.status, Mathf.FLOAT_ROUNDING_ERROR);
 
-            powerGraph.remove(producerTile.build);
+            powerGraph.removeList(producerTile.build);
             powerGraph.add(consumerTile.build);
             powerGraph.update();
 
             assertEquals(0.0f, consumerTile.build.power.status, Mathf.FLOAT_ROUNDING_ERROR);
-            if(consumerTile.block().consumes.hasPower()){
-                ConsumePower consumePower = consumerTile.block().consumes.getPower();
-                assertFalse(consumePower.valid(consumerTile.bc()));
+            if(consumerTile.block().consPower != null){
+                assertEquals(0f, consumerTile.block().consPower.efficiency(consumerTile.build));
             }
         }
     }

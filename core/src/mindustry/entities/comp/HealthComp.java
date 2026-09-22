@@ -1,6 +1,5 @@
 package mindustry.entities.comp;
 
-import arc.math.*;
 import arc.util.*;
 import mindustry.annotations.Annotations.*;
 import mindustry.gen.*;
@@ -34,7 +33,7 @@ abstract class HealthComp implements Entityc, Posc{
     void kill(){
         if(dead) return;
 
-        health = 0;
+        health = Math.min(health, 0);
         dead = true;
         killed();
         remove();
@@ -51,11 +50,7 @@ abstract class HealthComp implements Entityc, Posc{
 
     /** Damage and pierce armor. */
     void damagePierce(float amount, boolean withEffect){
-        if(this instanceof Shieldc){
-            damage(amount + ((Shieldc)this).armor(), withEffect);
-        }else{
-            damage(amount, withEffect);
-        }
+        damage(amount, withEffect);
     }
 
     /** Damage and pierce armor. */
@@ -63,7 +58,19 @@ abstract class HealthComp implements Entityc, Posc{
         damagePierce(amount, true);
     }
 
+    /** Damage and multiply armor received. */
+    void damageArmorMult(float amount, float armorMult, boolean withEffect){
+        damage(amount, withEffect);
+    }
+
+    /** Damage and multiply armor received. */
+    void damageArmorMult(float amount, float armorMult){
+        damageArmorMult(amount, armorMult, true);
+    }
+
     void damage(float amount){
+        if(Float.isNaN(health)) health = 0f;
+
         health -= amount;
         hitTime = 1f;
         if(health <= 0 && !dead){
@@ -89,8 +96,13 @@ abstract class HealthComp implements Entityc, Posc{
         damagePierce(amount * Time.delta, hitTime <= -20 + hitDuration);
     }
 
+    void damageContinuousArmorMult(float amount, float armorMult){
+        damageArmorMult(amount * Time.delta, armorMult, hitTime <= -20 + hitDuration);
+    }
+
     void clampHealth(){
-        health = Mathf.clamp(health, 0, maxHealth);
+        health = Math.min(health, maxHealth);
+        if(Float.isNaN(health)) health = 0f;
     }
 
     /** Heals by a flat amount. */

@@ -9,6 +9,7 @@ import mindustry.content.*;
 import mindustry.entities.*;
 import mindustry.game.*;
 import mindustry.graphics.*;
+import mindustry.logic.*;
 import mindustry.type.*;
 import mindustry.ui.*;
 import mindustry.world.*;
@@ -31,22 +32,26 @@ public class SolidPump extends Pump{
     public SolidPump(String name){
         super(name);
         hasPower = true;
+        //only supports ground by default
+        envEnabled = Env.terrestrial;
     }
 
     @Override
     public void drawPlace(int x, int y, int rotation, boolean valid){
+        drawPotentialLinks(x, y);
+
         if(attribute != null){
-            drawPlaceText(Core.bundle.formatFloat("bar.efficiency", Math.max(sumAttribute(attribute, x, y) / size / size + baseEfficiency, 0f) * 100 * percentSolid(x, y), 1), x, y, valid);
+            drawPlaceText(Core.bundle.format("bar.efficiency", Math.round(Math.max((sumAttribute(attribute, x, y)) / size / size + percentSolid(x, y) * baseEfficiency, 0f) * 100)), x, y, valid);
         }
     }
 
     @Override
     public void setBars(){
         super.setBars();
-        bars.add("efficiency", (SolidPumpBuild entity) -> new Bar(() -> Core.bundle.formatFloat("bar.pumpspeed",
-        entity.lastPump / Time.delta * 60, 1),
+        addBar("efficiency", (SolidPumpBuild entity) -> new Bar(() -> Core.bundle.formatFloat("bar.pumpspeed",
+        entity.lastPump * 60, 1),
         () -> Pal.ammo,
-        () -> entity.warmup));
+        () -> entity.warmup * entity.efficiency));
     }
 
     @Override
@@ -56,14 +61,19 @@ public class SolidPump extends Pump{
         stats.remove(Stat.output);
         stats.add(Stat.output, result, 60f * pumpAmount, true);
         if(attribute != null){
-            stats.add(baseEfficiency > 0.0001f ? Stat.affinities : Stat.tiles, attribute);
+            stats.add(baseEfficiency > 0.0001f ? Stat.affinities : Stat.tiles, attribute, floating, 1f, baseEfficiency <= 0.001f);
         }
     }
 
     @Override
-    public boolean canPlaceOn(Tile tile, Team team){
+    public boolean canPlaceOn(Tile tile, Team team, int rotation){
         float sum = tile.getLinkedTilesAs(this, tempTiles).sumf(t -> canPump(t) ? baseEfficiency + (attribute != null ? t.floor().attributes.get(attribute) : 0f) : 0f);
         return sum > 0.00001f;
+    }
+
+    @Override
+    public boolean outputsItems(){
+        return false;
     }
 
     @Override
@@ -84,37 +94,56 @@ public class SolidPump extends Pump{
         public float lastPump;
 
         @Override
+        public void drawCracks(){}
+
+        @Override
+        public void pickedUp(){
+            boost = validTiles = 0f;
+        }
+
+        @Override
         public void draw(){
             Draw.rect(region, x, y);
-            Drawf.liquid(liquidRegion, x, y, liquids.total() / liquidCapacity, liquids.current().color);
-            Draw.rect(rotatorRegion, x, y, pumpTime * rotateSpeed);
+            Draw.z(Layer.blockCracks);
+            super.drawCracks();
+            Draw.z(Layer.blockAfterCracks);
+
+            Drawf.liquid(liquidRegion, x, y, liquids.get(result) / liquidCapacity, result.color);
+            Drawf.spinSprite(rotatorRegion, x, y, pumpTime * rotateSpeed);
             Draw.rect(topRegion, x, y);
         }
 
         @Override
         public boolean shouldConsume(){
-            return liquids.get(result) < liquidCapacity - 0.01f && enabled;
+            return liquids.get(result) < liquidCapacity - 0.01f;
         }
 
         @Override
         public void updateTile(){
+            liquidDrop = result;
             float fraction = Math.max(validTiles + boost + (attribute == null ? 0 : attribute.env()), 0);
 
-            if(cons.valid() && typeLiquid() < liquidCapacity - 0.001f){
-                float maxPump = Math.min(liquidCapacity - typeLiquid(), pumpAmount * delta() * fraction * efficiency());
+            if(efficiency > 0 && typeLiquid() < liquidCapacity - 0.001f){
+                float maxPump = Math.min(liquidCapacity - typeLiquid(), pumpAmount * delta() * fraction * efficiency);
                 liquids.add(result, maxPump);
-                lastPump = maxPump;
+                lastPump = maxPump / Time.delta;
                 warmup = Mathf.lerpDelta(warmup, 1f, 0.02f);
                 if(Mathf.chance(delta() * updateEffectChance))
-                    updateEffect.at(getX() + Mathf.range(size * 2f), getY() + Mathf.range(size * 2f));
+                    updateEffect.at(x + Mathf.range(size * 2f), y + Mathf.range(size * 2f));
             }else{
                 warmup = Mathf.lerpDelta(warmup, 0f, 0.02f);
                 lastPump = 0f;
             }
 
-            pumpTime += warmup * delta();
+            pumpTime += warmup * edelta();
 
             dumpLiquid(result);
+        }
+
+        @Override
+        public double sense(LAccess sensor){
+            if(sensor == LAccess.efficiency) return (validTiles + boost) * efficiency;
+            return super.sense(sensor);
         }
 
         @Override
@@ -131,7 +160,7 @@ public class SolidPump extends Pump{
         }
 
         public float typeLiquid(){
-            return liquids.total();
+            return liquids.get(result);
         }
     }
 }

@@ -1,20 +1,22 @@
 package mindustry.desktop.steam;
 
 import arc.*;
-import com.codedisaster.steamworks.*;
-import com.codedisaster.steamworks.SteamRemoteStorage.*;
-import com.codedisaster.steamworks.SteamUGC.*;
-import arc.struct.*;
 import arc.files.*;
 import arc.func.*;
 import arc.scene.ui.*;
+import arc.struct.*;
 import arc.util.*;
 import mindustry.game.*;
 import mindustry.gen.*;
+import mindustry.graphics.*;
 import mindustry.maps.*;
 import mindustry.mod.Mods.*;
+import mindustry.service.*;
 import mindustry.type.*;
 import mindustry.ui.dialogs.*;
+import steamworks.*;
+import steamworks.SteamRemoteStorage.*;
+import steamworks.SteamUGC.*;
 
 import static mindustry.Vars.*;
 
@@ -32,17 +34,16 @@ public class SWorkshop implements SteamUGCCallback{
         ItemInstallInfo info = new ItemInstallInfo();
         ugc.getSubscribedItems(ids);
 
-        Seq<Fi> folders = Seq.with(ids).map(f -> {
-            ugc.getItemInstallInfo(f, info);
-            return new Fi(info.getFolder());
-        }).select(f -> f != null && f.list().length > 0);
+        Seq<Fi> folders = Seq.with(ids)
+            .map(f -> !ugc.getItemInstallInfo(f, info) || info.getFolder() == null ? null : new Fi(info.getFolder()))
+            .select(f -> f != null && f.list().length > 0);
 
         workshopFiles.put(Map.class, folders.select(f -> f.list().length == 1 && f.list()[0].extension().equals(mapExtension)).map(f -> f.list()[0]));
         workshopFiles.put(Schematic.class, folders.select(f -> f.list().length == 1 && f.list()[0].extension().equals(schematicExtension)).map(f -> f.list()[0]));
         workshopFiles.put(LoadedMod.class, folders.select(f -> f.child("mod.json").exists() || f.child("mod.hjson").exists()));
 
         if(!workshopFiles.get(Map.class).isEmpty()){
-            SAchievement.downloadMapWorkshop.complete();
+            Achievement.downloadMapWorkshop.complete();
         }
 
         workshopFiles.each((type, list) -> {
@@ -69,18 +70,12 @@ public class SWorkshop implements SteamUGCCallback{
             return;
         }
 
-        showPublish(id -> update(p, id, null));
-    }
-
-    /** Update an existing item with a changelog. */
-    public void updateItem(Publishable p, String changelog){
-        String id = p.getSteamID();
-        long handle = Strings.parseLong(id, -1);
-        update(p, new SteamPublishedFileID(handle), changelog);
+        showPublish(id -> update(p, id, null, true));
     }
 
     /** Fetches info for an item, checking to make sure that it exists.*/
     public void viewListing(Publishable p){
+        if(p.getSteamID() == null) return;
         long handle = Strings.parseLong(p.getSteamID(), -1);
         SteamPublishedFileID id = new SteamPublishedFileID(handle);
         Log.info("Handle = " + handle);
@@ -113,6 +108,12 @@ public class SWorkshop implements SteamUGCCallback{
                                 cont.row();
                                 TextArea field = cont.area("", t -> {}).size(500f, 160f).get();
                                 field.setMaxLength(400);
+                                cont.row();
+
+                                boolean[] updatedesc = {false};
+
+                                cont.check("@updatedesc", b -> updatedesc[0] = b).pad(4);
+
                                 buttons.defaults().size(120, 54).pad(4);
                                 buttons.button("@ok", () -> {
                                     if(!p.prePublish()){
@@ -121,7 +122,7 @@ public class SWorkshop implements SteamUGCCallback{
                                     }
 
                                     ui.loadfrag.show("@publishing");
-                                    updateItem(p, field.getText().replace("\r", "\n"));
+                                    SWorkshop.this.update(p, new SteamPublishedFileID(Strings.parseLong(p.getSteamID(), -1)), field.getText().replace("\r", "\n"), updatedesc[0]);
                                     dialog.hide();
                                     hide();
                                 });
@@ -149,21 +150,26 @@ public class SWorkshop implements SteamUGCCallback{
         SVars.net.friends.activateGameOverlayToWebPage("steam://url/CommunityFilePage/" + id.handle());
     }
 
-    void update(Publishable p, SteamPublishedFileID id, String changelog){
+    void update(Publishable p, SteamPublishedFileID id, String changelog, boolean updateDescription){
         Log.info("Calling update(@) @", p.steamTitle(), id.handle());
         String sid = id.handle() + "";
 
         updateItem(id, h -> {
-            if(p.steamDescription() != null){
-                ugc.setItemDescription(h, p.steamDescription());
+            if(updateDescription){
+                ugc.setItemTitle(h, p.steamTitle());
+                if(p.steamDescription() != null){
+                    ugc.setItemDescription(h, p.steamDescription());
+                }
             }
 
             Seq<String> tags = p.extraTags();
             tags.add(p.steamTag());
 
-            ugc.setItemTitle(h, p.steamTitle());
             ugc.setItemTags(h, tags.toArray(String.class));
-            ugc.setItemPreview(h, p.createSteamPreview(sid).absolutePath());
+            String path = p.createSteamPreview(sid).absolutePath();
+
+            Log.info("PREVIEW @ @ @",  ugc.setItemPreview(h, path), path, Fi.get(path).exists());
+
             ugc.setItemContent(h, p.createSteamFolder(sid).absolutePath());
             if(changelog == null){
                 ugc.setItemVisibility(h, PublishedFileVisibility.Private);
@@ -171,7 +177,7 @@ public class SWorkshop implements SteamUGCCallback{
             ugc.submitItemUpdate(h, changelog == null ? "<Created>" : changelog);
 
             if(p instanceof Map){
-                SAchievement.publishMap.complete();
+                Achievement.publishMap.complete();
             }
         }, () -> p.addSteamID(sid));
     }
@@ -213,9 +219,9 @@ public class SWorkshop implements SteamUGCCallback{
 
             ui.loadfrag.setProgress(() -> {
                 ItemUpdateStatus status = ugc.getItemUpdateProgress(h, info);
-                ui.loadfrag.setText("@" + status.name().toLowerCase());
+                ui.loadfrag.setText("@" + status.name().toLowerCase(), Pal.accent);
                 if(status == ItemUpdateStatus.Invalid){
-                    ui.loadfrag.setText("@done");
+                    ui.loadfrag.setText("@done", Pal.accent);
                     return 1f;
                 }
                 return (float)status.ordinal() / (float)ItemUpdateStatus.values().length;
@@ -226,11 +232,6 @@ public class SWorkshop implements SteamUGCCallback{
             ui.loadfrag.hide();
             Log.err(t);
         }
-    }
-
-    @Override
-    public void onRequestUGCDetails(SteamUGCDetails details, SteamResult result){
-
     }
 
     @Override
@@ -263,7 +264,7 @@ public class SWorkshop implements SteamUGCCallback{
         ItemInstallInfo info = new ItemInstallInfo();
         ugc.getItemInstallInfo(publishedFileID, info);
         Log.info("Item subscribed from @", info.getFolder());
-        SAchievement.downloadMapWorkshop.complete();
+        Achievement.downloadMapWorkshop.complete();
     }
 
     @Override
@@ -311,40 +312,10 @@ public class SWorkshop implements SteamUGCCallback{
 
     @Override
     public void onDownloadItemResult(int appID, SteamPublishedFileID publishedFileID, SteamResult result){
-        SAchievement.downloadMapWorkshop.complete();
+        Achievement.downloadMapWorkshop.complete();
         ItemInstallInfo info = new ItemInstallInfo();
         ugc.getItemInstallInfo(publishedFileID, info);
         Log.info("Item downloaded to @", info.getFolder());
-    }
-
-    @Override
-    public void onUserFavoriteItemsListChanged(SteamPublishedFileID publishedFileID, boolean wasAddRequest, SteamResult result){
-
-    }
-
-    @Override
-    public void onSetUserItemVote(SteamPublishedFileID publishedFileID, boolean voteUp, SteamResult result){
-
-    }
-
-    @Override
-    public void onGetUserItemVote(SteamPublishedFileID publishedFileID, boolean votedUp, boolean votedDown, boolean voteSkipped, SteamResult result){
-
-    }
-
-    @Override
-    public void onStartPlaytimeTracking(SteamResult result){
-
-    }
-
-    @Override
-    public void onStopPlaytimeTracking(SteamResult result){
-
-    }
-
-    @Override
-    public void onStopPlaytimeTrackingForAllItems(SteamResult result){
-
     }
 
     @Override

@@ -4,7 +4,6 @@ import arc.graphics.g2d.*;
 import mindustry.annotations.Annotations.*;
 import mindustry.game.*;
 import mindustry.gen.*;
-import mindustry.ui.*;
 
 import static mindustry.Vars.*;
 
@@ -13,15 +12,23 @@ abstract class BlockUnitComp implements Unitc{
     @Import Team team;
 
     @ReadOnly transient Building tile;
+    transient float ammo;
 
     public void tile(Building tile){
         this.tile = tile;
 
         //sets up block stats
         maxHealth(tile.block.health);
-        health(tile.health());
+        health(tile.health);
         hitSize(tile.block.size * tilesize * 0.7f);
         set(tile);
+    }
+
+    @Override
+    public void add(){
+        if(tile == null){
+            throw new RuntimeException("Do not add BlockUnit entities to the game, they will simply crash. Internal use only.");
+        }
     }
 
     @Override
@@ -34,7 +41,13 @@ abstract class BlockUnitComp implements Unitc{
     @Replace
     @Override
     public TextureRegion icon(){
-        return tile.block.icon(Cicon.full);
+        return tile.block.uiIcon;
+    }
+
+    @Replace
+    @Override
+    public float ammof(){
+        return ammo;
     }
 
     @Override
@@ -58,11 +71,16 @@ abstract class BlockUnitComp implements Unitc{
     }
 
     @Replace
+    public boolean isAdded(){
+        return tile != null && tile.isValid();
+    }
+
+    @Replace
     public void team(Team team){
         if(tile != null && this.team != team){
             this.team = team;
             if(tile.team != team){
-                tile.team(team);
+                tile.changeTeam(team);
             }
         }
     }

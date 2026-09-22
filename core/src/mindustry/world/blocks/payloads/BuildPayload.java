@@ -1,11 +1,14 @@
 package mindustry.world.blocks.payloads;
 
 import arc.graphics.g2d.*;
+import arc.math.*;
+import arc.util.*;
 import arc.util.io.*;
+import mindustry.ctype.*;
 import mindustry.game.*;
 import mindustry.gen.*;
 import mindustry.graphics.*;
-import mindustry.ui.*;
+import mindustry.type.*;
 import mindustry.world.*;
 
 import static mindustry.Vars.*;
@@ -15,6 +18,7 @@ public class BuildPayload implements Payload{
 
     public BuildPayload(Block block, Team team){
         this.build = block.newBuilding().create(block, team);
+        this.build.tile = emptyTile;
     }
 
     public BuildPayload(Building build){
@@ -35,8 +39,63 @@ public class BuildPayload implements Payload{
     }
 
     @Override
+    public boolean isDead(){
+        return build.dead;
+    }
+
+    @Override
+    public boolean contentEquals(Payload other){
+        return other instanceof BuildPayload bp && bp.block() == build.block;
+    }
+
+    @Override
+    public UnlockableContent content(){
+        return build.block;
+    }
+
+    @Override
+    public void update(@Nullable Unit unitHolder, @Nullable Building buildingHolder){
+        if(unitHolder != null && (!build.block.updateInUnits || (!state.rules.unitPayloadUpdate && !build.block.alwaysUpdateInUnits))) return;
+
+        build.tile = emptyTile;
+        build.updatePayload(unitHolder, buildingHolder);
+    }
+
+    @Override
+    public void destroyed(){
+        build.dead = true;
+        build.onDestroyed();
+        build.afterDestroyed();
+    }
+
+    @Override
+    public ItemStack[] requirements(){
+        return build.block.requirements;
+    }
+
+    @Override
+    public float buildTime(){
+        return build.block.buildTime;
+    }
+
+    @Override
+    public float x(){
+        return build.x;
+    }
+
+    @Override
+    public float y(){
+        return build.y;
+    }
+
+    @Override
     public float size(){
         return build.block.size * tilesize;
+    }
+
+    @Override
+    public void remove(){
+        build.remove();
     }
 
     @Override
@@ -53,8 +112,28 @@ public class BuildPayload implements Payload{
     }
 
     @Override
+    public void drawShadow(float alpha){
+        Drawf.squareShadow(build.x, build.y, build.block.size * tilesize * 1.85f, alpha);
+    }
+
+    @Override
     public void draw(){
-        Drawf.shadow(build.x, build.y, build.block.size * tilesize * 2f);
-        Draw.rect(build.block.icon(Cicon.full), build.x, build.y);
+        float prevZ = Draw.z();
+        Draw.z(prevZ - 0.001f);
+        drawShadow(1f);
+        Draw.z(prevZ);
+        Draw.zTransform(z ->
+            z >= Layer.flyingUnitLow + 1f ? z :
+            0.0011f + Math.min(Mathf.clamp((z - prevZ)/100f, -0.0009f, 0.9f) + prevZ, Layer.flyingUnitLow - 1f)
+        );
+        build.tile = emptyTile;
+        build.payloadDraw();
+        Draw.zTransform();
+        Draw.z(prevZ);
+    }
+
+    @Override
+    public TextureRegion icon(){
+        return block().fullIcon;
     }
 }

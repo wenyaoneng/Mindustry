@@ -10,17 +10,38 @@ public class IconConverter{
     float width, height;
 
     public static void main(String[] __){
+        /*
+        Process for adding an icon to the font:
+
+        //CONVERTING A PNG INTO A SVG
+        1. Add your png to core/assets-raw/icons/
+        2. Run gradle tools:pack. This will add the png to icons.properties
+        3. If you haven't done it already, download inkscape and add in path enviroment variables your inkscape installation so "inkscape --etc" commands can run
+        4. Run gradle tools:icongen. This step will not work if you haven't done step 3
+        5. Locate your icon.svg under core/assets-raw/fontgen/extra/
+        6. Often generated icons cannot be read by fontello correctly ("If image looks not as expected please convert to compound path manually..."), follow the steps in the wiki linked (https://github.com/fontello/fontello/wiki/How-to-use-custom-images#importing-svg-images)
+
+        //ADDING TO FONTS
+        1. Go to Fontello and load the config.json from core/assets-raw/fontgen/config.json
+        2. Drag the SVG in
+        3. Click on your new fontello icon to select it. If selected the icon circle should show a red outline
+        4. Export the config and font file ("Download webfont" button), replace the old config
+        5. Intall FontForge if you havent done it already
+        6. Take the font (.ttf) from the zip, open it in FontForge, and merge it into font.woff (Element -> Merge fonts) inside core/assets/fonts/. You will be prompted whether you want to keep the existing kerning, usually select Yes
+        7. Optionally, go view -> go to (the 0x unicode index, or search by name) to check if the icon has been added
+        8. Go to file -> generate fonts, uncheck font validation, click generate and replace the old font.woff. Saving the sfd file is not necessary
+        9. Repeat steps 6 and 8 for icon.ttf
+        10. Done! do note when using icons if they contain any dashes (-) they will be converted into camelcase. So something like foo-bar.svg becomes Icon.fooBar
+        **/
 
         Log.info("Converting icons...");
         Time.mark();
         Fi.get("fontgen/icons").deleteDirectory();
         Fi.get("fontgen/icon_parts").deleteDirectory();
-        Fi[] list = new Fi("icons").list();
 
-        ArcNativesLoader.load();
         Seq<Fi> files = new Seq<>();
 
-        for(Fi img : list){
+        for(Fi img :  new Fi("icons").list()){
             if(img.extension().equals("png")){
                 Fi dst = new Fi("fontgen/icons").child(img.nameWithoutExtension().replace("icon-", "") + ".svg");
                 new IconConverter().convert(new Pixmap(img), dst);
@@ -29,7 +50,7 @@ public class IconConverter{
             }
         }
 
-        Seq<String> args = Seq.with("inkscape", "--batch-process", "--verb", "EditSelectAll;SelectionUnion;FitCanvasToSelectionOrDrawing;FileSave");
+        Seq<String> args = Seq.with("inkscape", "--batch-process", "--actions", "select-all; path-union; fit-canvas-to-selection; export-overwrite; export-do");
         args.addAll(files.map(Fi::absolutePath));
 
         Fi.get("fontgen/extra").findAll().each(f -> f.copyTo(Fi.get("fontgen/icons").child(f.name())));
@@ -42,25 +63,25 @@ public class IconConverter{
     }
 
     void convert(Pixmap pixmap, Fi output){
-        boolean[][] grid = new boolean[pixmap.getWidth()][pixmap.getHeight()];
+        boolean[][] grid = new boolean[pixmap.width][pixmap.height];
 
-        for(int x = 0; x < pixmap.getWidth(); x++){
-            for(int y = 0; y < pixmap.getHeight(); y++){
-                grid[x][pixmap.getHeight() - 1 - y] = !Pixmaps.empty(pixmap.getPixel(x, y));
+        for(int x = 0; x < pixmap.width; x++){
+            for(int y = 0; y < pixmap.height; y++){
+                grid[x][pixmap.height - 1 - y] = !pixmap.empty(x, y);
             }
         }
 
         float xscl = 1f, yscl = 1f;//resolution / (float)pixmap.getWidth(), yscl = resolution / (float)pixmap.getHeight();
         float scl = xscl;
 
-        width = pixmap.getWidth();
-        height = pixmap.getHeight();
+        width = pixmap.width;
+        height = pixmap.height;
 
-        out.append("<svg width=\"").append(pixmap.getWidth()).append("\" height=\"").append(pixmap.getHeight()).append("\">\n");
+        out.append("<svg width=\"").append(pixmap.width).append("\" height=\"").append(pixmap.height).append("\">\n");
 
-        for(int x = -1; x < pixmap.getWidth(); x++){
-            for(int y = -1; y < pixmap.getHeight(); y++){
-                int index = index(x, y, pixmap.getWidth(), pixmap.getHeight(), grid);
+        for(int x = -1; x < pixmap.width; x++){
+            for(int y = -1; y < pixmap.height; y++){
+                int index = index(x, y, pixmap.width, pixmap.height, grid);
 
                 float leftx = x * xscl, boty = y * yscl, rightx = x * xscl + xscl, topy = y * xscl + yscl,
                 midx = x * xscl + xscl / 2f, midy = y * yscl + yscl / 2f;
@@ -216,7 +237,7 @@ public class IconConverter{
 
         output.writeString(out.toString());
     }
-    
+
     void square(float x, float y, float size){
         rect(x - size/2f, y - size/2f, size, size);
     }

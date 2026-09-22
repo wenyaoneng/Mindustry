@@ -2,9 +2,7 @@ package mindustry.android;
 
 import android.annotation.*;
 import android.os.*;
-import android.os.Build.*;
 import arc.*;
-import arc.backend.android.*;
 import com.android.dex.*;
 import com.android.dx.cf.direct.*;
 import com.android.dx.command.dexer.*;
@@ -30,23 +28,6 @@ public class AndroidRhinoContext{
      * @return a context prepared for android
      */
     public static Context enter(File cacheDirectory){
-        if(!SecurityController.hasGlobal())
-            SecurityController.initGlobal(new SecurityController(){
-                @Override
-                public GeneratedClassLoader createClassLoader(ClassLoader classLoader, Object o){
-                    return Context.getCurrentContext().createClassLoader(classLoader);
-                }
-
-                @Override
-                public Object getDynamicSecurityDomain(Object o){
-                    return null;
-                }
-
-                @Override
-                public Object callWithDomain(Object o, Context context, Callable callable, Scriptable scriptable, Scriptable scriptable1, Object[] objects){
-                    return null;
-                }
-            });
 
         AndroidContextFactory factory;
         if(!ContextFactory.hasExplicitGlobal()){
@@ -175,8 +156,9 @@ public class AndroidRhinoContext{
             }catch(IOException e){
                 e.printStackTrace();
             }
-            android.content.Context context = ((AndroidApplication) Core.app).getContext();
-            return new DexClassLoader(dexFile.getPath(), VERSION.SDK_INT >= 21 ? context.getCodeCacheDir().getPath() : context.getCacheDir().getAbsolutePath(), null, getParent()).loadClass(name);
+
+            var context = (android.content.Context)Core.app;
+            return new DexClassLoader(dexFile.getPath(), context.getCodeCacheDir().getPath(), null, getParent()).loadClass(name);
         }
 
         @Override

@@ -1,12 +1,12 @@
 package mindustry.world.blocks.defense.turrets;
 
+import arc.struct.*;
 import mindustry.entities.bullet.*;
 import mindustry.logic.*;
 import mindustry.world.meta.*;
 
 public class PowerTurret extends Turret{
     public BulletType shootType;
-    public float powerUse = 1f;
 
     public PowerTurret(String name){
         super(name);
@@ -16,29 +16,26 @@ public class PowerTurret extends Turret{
     @Override
     public void setStats(){
         super.setStats();
-        stats.add(Stat.damage, shootType.damage, StatUnit.none);
+        stats.add(Stat.ammo, StatValues.ammo(ObjectMap.of(this, shootType)));
     }
 
-    @Override
-    public void init(){
-        consumes.powerCond(powerUse, TurretBuild::isActive);
-        super.init();
+    public void limitRange(float margin){
+        limitRange(shootType, margin);
     }
 
     public class PowerTurretBuild extends TurretBuild{
 
         @Override
-        public void updateTile(){
-            unit.ammo(power.status * unit.type().ammoCapacity);
-
-            super.updateTile();
+        public float getAmmoFraction(){
+            return power == null ? 0f : power.status;
         }
 
         @Override
         public double sense(LAccess sensor){
             return switch(sensor){
-                case ammo -> power.status;
+                case ammo -> power == null ? 0f : power.status;
                 case ammoCapacity -> 1;
+                case heat -> heatRequirement > 0 ? heatReq : Float.NaN;
                 default -> super.sense(sensor);
             };
         }

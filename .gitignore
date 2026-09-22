@@ -1,10 +1,12 @@
 logs/
+/fastlane/metadata/android/en-US/changelogs/
 /core/assets/mindustry-saves/
 /core/assets/mindustry-maps/
 /core/assets/bundles/output/
 /core/assets/.gifimages/
 /deploy/
 /out/
+ios/libs/
 /desktop/packr-out/
 /desktop/packr-export/
 /desktop/mindustry-saves/
@@ -21,6 +23,7 @@ logs/
 /tools/build/
 /tests/build/
 /server/build/
+ios/libs/
 changelog
 saves/
 /core/assets-raw/fontgen/out/
@@ -42,10 +45,18 @@ steam_appid.txt
 ios/robovm.properties
 packr-out/
 config/
+buildSrc/
 *.gif
+/tests/out
 
 /core/assets/basepartnames
 version.properties
+
+#sprites
+
+core/assets/sprites/sprites*
+core/assets/sprites/fallback/
+core/assets/sprites/block_colors.png
 
 .attach_*
 ## Java
@@ -94,6 +105,10 @@ com_crashlytics_export_strings.xml
 .loadpath
 .externalToolBuilders/
 *.launch
+
+## VSCode
+
+.vscode/
 
 ## NetBeans
 
@@ -150,3 +165,9 @@ gradle-app.setting
 .DS_Store
 Thumbs.db
 android/libs/
+
+# ignored due to frequent branch conflicts.
+core/assets/logicids.dat
+
+# project files for the sectors
+core/assets-raw/sprites/ui/sectors/*.json

@@ -9,6 +9,7 @@ import mindustry.entities.*;
 import mindustry.gen.*;
 import mindustry.type.*;
 import mindustry.world.*;
+import mindustry.world.meta.*;
 
 public class Incinerator extends Block{
     public Effect effect = Fx.fuelburn;
@@ -27,11 +28,12 @@ public class Incinerator extends Block{
 
         @Override
         public void updateTile(){
-            if(consValid() && efficiency() > 0.9f){
-                heat = Mathf.lerpDelta(heat, 1f, 0.04f);
-            }else{
-                heat = Mathf.lerpDelta(heat, 0f, 0.02f);
-            }
+            heat = Mathf.approachDelta(heat, efficiency, 0.04f);
+        }
+
+        @Override
+        public BlockStatus status(){
+            return !enabled ? BlockStatus.logicDisable : heat > 0.5f ? BlockStatus.active : BlockStatus.noInput;
         }
 
         @Override
@@ -42,7 +44,7 @@ public class Incinerator extends Block{
                 float g = 0.3f;
                 float r = 0.06f;
 
-                Draw.alpha(((1f - g) + Mathf.absin(Time.time(), 8f, g) + Mathf.random(r) - r) * heat);
+                Draw.alpha(((1f - g) + Mathf.absin(Time.time, 8f, g) + Mathf.random(r) - r) * heat);
 
                 Draw.tint(flameColor);
                 Fill.circle(x, y, 2f);
@@ -62,7 +64,7 @@ public class Incinerator extends Block{
 
         @Override
         public boolean acceptItem(Building source, Item item){
-            return heat > 0.5f;
+            return heat > 0.5f && enabled;
         }
 
         @Override
@@ -74,7 +76,7 @@ public class Incinerator extends Block{
 
         @Override
         public boolean acceptLiquid(Building source, Liquid liquid){
-            return heat > 0.5f;
+            return heat > 0.5f && liquid.incinerable && enabled;
         }
     }
 }

@@ -1,14 +1,15 @@
 package mindustry.game;
 
+import arc.func.*;
 import arc.math.*;
 import arc.struct.*;
 import arc.util.*;
 import mindustry.content.*;
 import mindustry.ctype.*;
-import mindustry.maps.*;
 import mindustry.type.*;
 import mindustry.world.*;
 import mindustry.world.blocks.storage.CoreBlock.*;
+import mindustry.world.meta.*;
 import mindustry.world.modules.*;
 
 import java.util.*;
@@ -20,11 +21,17 @@ public class SectorInfo{
     private static final int valueWindow = 60;
     /** refresh period of export in ticks */
     private static final float refreshPeriod = 60;
+    private static float returnf;
 
     /** Core input statistics. */
     public ObjectMap<Item, ExportStat> production = new ObjectMap<>();
+    /** Raw item production statistics. */
+    public ObjectMap<Item, ExportStat> rawProduction = new ObjectMap<>();
     /** Export statistics. */
     public ObjectMap<Item, ExportStat> export = new ObjectMap<>();
+    //TODO: there is an obvious exploit with launch pad redirection here; pads can be redirected after leaving a sector, which doesn't update calculations.
+    /** Import statistics, based on what launch pads are actually receiving. */
+    public ObjectMap<Item, ExportStat> imports = new ObjectMap<>();
     /** Items stored in all cores. */
     public ItemSeq items = new ItemSeq();
     /** The best available core type. */
@@ -33,6 +40,12 @@ public class SectorInfo{
     public int storageCapacity = 0;
     /** Whether a core is available here. */
     public boolean hasCore = true;
+    /** Last sector preset name set to this sector. */
+    public @Nullable String lastPresetName;
+    /** Last size of the map. */
+    public int lastWidth, lastHeight;
+    /** Whether this sector was ever fully captured. */
+    public boolean wasCaptured = false;
     /** Sector that was launched from. */
     public @Nullable Sector origin;
     /** Launch destination. */
@@ -45,49 +58,60 @@ public class SectorInfo{
     public boolean attack = false;
     /** Whether this sector has any enemy spawns. */
     public boolean hasSpawns = true;
+    /** How many times the player has tried to land at this sector with a fresh core. */
+    public int attempts;
     /** Wave # from state */
     public int wave = 1, winWave = -1;
-    /** Waves this sector can survive if under attack. Based on wave in info. <0 means uncalculated. */
-    public int wavesSurvived = -1;
     /** Time between waves. */
-    public float waveSpacing = 60 * 60 * 2;
-    /** Damage dealt to sector. */
-    public float damage;
-    /** How many waves have passed while the player was away. */
-    public int wavesPassed;
+    public float waveSpacing = 2 * Time.toMinutes;
     /** Packed core spawn position. */
     public int spawnPosition;
-    /** How long the player has been playing elsewhere. */
-    public float secondsPassed;
+    /** How many minutes this sector has been captured. */
+    public float minutesCaptured;
+    /** Light coverage in terms of radius. */
+    public float lightCoverage;
     /** Display name. */
     public @Nullable String name;
     /** Displayed icon. */
     public @Nullable String icon;
+    /** Displayed icon, as content. */
+    public @Nullable UnlockableContent contentIcon;
     /** Version of generated waves. When it doesn't match, new waves are generated. */
     public int waveVersion = -1;
     /** Whether this sector was indicated to the player or not. */
     public boolean shown = false;
 
-    /** Special variables for simulation. */
-    public float sumHealth, sumRps, sumDps, waveHealthBase, waveHealthSlope, waveDpsBase, waveDpsSlope;
+    public ObjectFloatMap<Item> importCooldownTimers = new ObjectFloatMap<>();
+    public @Nullable transient float[] importRateCache;
+
+    /** Temporary seq for last imported items. Do not use. */
+    public transient ItemSeq lastImported = new ItemSeq();
 
     /** Counter refresh state. */
     private transient Interval time = new Interval();
-    /** Core item storage to prevent spoofing. */
-    private transient int[] coreItemCounts;
+    /** Core item storage input/output deltas. */
+    private @Nullable transient int[] coreDeltas;
+    /** Core item storage input/output deltas. */
+    private @Nullable transient int[] productionDeltas;
+
+    /** @return whether the sector was last saved with the same preset. if false, this means the preset changed, and thus the spawn/plan data should be discarded. */
+    public boolean sectorDataMatches(Sector sector){
+        if(sector.preset != null && (sector.preset.generator.map.width != lastWidth || sector.preset.generator.map.height != lastHeight)){
+            return false;
+        }
+        return Structs.eq(sector.preset == null ? null : sector.preset.name, lastPresetName);
+    }
 
     /** Handles core item changes. */
     public void handleCoreItem(Item item, int amount){
-        if(coreItemCounts == null){
-            coreItemCounts = new int[content.items().size];
-        }
-        coreItemCounts[item.id] += amount;
+        if(coreDeltas == null) coreDeltas = new int[content.items().size];
+        coreDeltas[item.id] += amount;
     }
 
-    /** @return the real location items go when launched on this sector */
-    public Sector getRealDestination(){
-        //on multiplayer the destination is, by default, the first captured sector (basically random)
-        return !net.client() || destination != null ? destination : state.rules.sector.planet.sectors.find(Sector::hasBase);
+    /** Handles raw production stats. */
+    public void handleProduction(Item item, int amount){
+        if(productionDeltas == null) productionDeltas = new int[content.items().size];
+        productionDeltas[item.id] += amount;
     }
 
     /** Updates export statistics. */
@@ -100,13 +124,41 @@ public class SectorInfo{
         export.get(item, ExportStat::new).counter += amount;
     }
 
-    /** Subtracts from export statistics. */
+    /** Updates import statistics. */
     public void handleItemImport(Item item, int amount){
-        export.get(item, ExportStat::new).counter -= amount;
+        imports.get(item, ExportStat::new).counter += amount;
     }
 
     public float getExport(Item item){
         return export.get(item, ExportStat::new).mean;
+    }
+
+    public boolean hasExport(Item item){
+        var exp = export.get(item);
+        return exp != null && exp.mean > 0f;
+    }
+
+    public void refreshImportRates(Planet planet){
+        if(importRateCache == null || importRateCache.length != content.items().size){
+            importRateCache = new float[content.items().size];
+        }else{
+            Arrays.fill(importRateCache, 0f);
+        }
+        eachImport(planet, sector -> sector.info.export.each((item, stat) -> {
+            importRateCache[item.id] += stat.mean;
+        }));
+    }
+
+    public float[] getImportRates(Planet planet){
+        if(importRateCache == null){
+            refreshImportRates(planet);
+        }
+        return importRateCache;
+    }
+
+    /** @return the import rate of an item as item/second. This is the *raw* max import rate, not what landing pads are actually using. */
+    public float getImportRate(Planet planet, Item item){
+        return getImportRates(planet)[item.id];
     }
 
     /** Write contents of meta into main storage. */
@@ -114,12 +166,18 @@ public class SectorInfo{
         //enable attack mode when there's a core.
         if(state.rules.waveTeam.core() != null){
             attack = true;
-            winWave = 0;
+            if(!state.rules.sector.planet.allowWaves){
+                winWave = 0;
+            }
         }
 
         //if there are infinite waves and no win wave, add a win wave.
-        if(waves && winWave <= 0 && !attack){
+        if(winWave <= 0 && !attack && state.rules.sector.planet.allowWaves){
             winWave = 30;
+        }
+
+        if(state.rules.sector != null && state.rules.sector.preset != null && state.rules.sector.preset.captureWave > 0 && !state.rules.sector.planet.allowWaves){
+            winWave = state.rules.sector.preset.captureWave;
         }
 
         state.wave = wave;
@@ -127,11 +185,6 @@ public class SectorInfo{
         state.rules.waveSpacing = waveSpacing;
         state.rules.winWave = winWave;
         state.rules.attackMode = attack;
-
-        //assign new wave patterns when the version changes
-        if(waveVersion != Waves.waveVersion && state.rules.sector.preset == null){
-            state.rules.spawns = Waves.generate(state.rules.sector.threat);
-        }
 
         CoreBuild entity = state.rules.defaultTeam.core();
         if(entity != null){
@@ -143,7 +196,7 @@ public class SectorInfo{
     }
 
     /** Prepare data for writing to a save. */
-    public void prepare(){
+    public void prepare(Sector sector){
         //update core items
         items.clear();
 
@@ -155,10 +208,12 @@ public class SectorInfo{
                 this.items.set(content.item(i), items.get(i));
             }
 
-            spawnPosition = entity.pos();
+            //don't change the spawn position after the sector spawn is set by the generator once
+            if(spawnPosition == 0){
+                spawnPosition = entity.pos();
+            }
         }
 
-        waveVersion = Waves.waveVersion;
         waveSpacing = state.rules.waveSpacing;
         wave = state.wave;
         winWave = state.rules.winWave;
@@ -167,16 +222,37 @@ public class SectorInfo{
         hasCore = entity != null;
         bestCoreType = !hasCore ? Blocks.air : state.rules.defaultTeam.cores().max(e -> e.block.size).block;
         storageCapacity = entity != null ? entity.storageCapacity : 0;
-        secondsPassed = 0;
-        wavesPassed = 0;
-        damage = 0;
         hasSpawns = spawner.countSpawns() > 0;
+        lastPresetName = sector.preset == null ? null : sector.preset.name;
+        lastWidth = world.width();
+        lastHeight = world.height();
 
-        if(state.rules.sector != null){
-            state.rules.sector.saveInfo();
+        lightCoverage = 0f;
+        for(var build : state.rules.defaultTeam.data().buildings){
+            if(build.block.emitLight){
+                lightCoverage += build.block.lightRadius * build.efficiency;
+            }
         }
 
-        SectorDamage.writeParameters(this);
+        lightCoverage += state.rules.defaultTeam.data().units.sumf(u -> u.type.lightRadius/2f);
+
+        //cap production at raw production.
+        production.each((item, stat) -> {
+            stat.mean = Math.min(stat.mean, rawProduction.get(item, ExportStat::new).mean);
+        });
+
+        var pads = indexer.getFlagged(state.rules.defaultTeam, BlockFlag.launchPad);
+
+        //disable export when launch pads are disabled, or there aren't any active ones
+        if(pads.size == 0 || !pads.contains(t -> t.efficiency > 0)){
+            export.clear();
+        }
+
+        sector.saveInfo();
+
+        if(sector.planet.generator != null){
+            sector.planet.generator.beforeSaveWrite(sector);
+        }
     }
 
     /** Update averages of various stats, updates some special sector logic.
@@ -185,53 +261,94 @@ public class SectorInfo{
         //updating in multiplayer as a client doesn't make sense
         if(net.client()) return;
 
-        CoreBuild ent = state.rules.defaultTeam.core();
-
         //refresh throughput
         if(time.get(refreshPeriod)){
 
-            //refresh export
-            export.each((item, stat) -> {
-                //initialize stat after loading
-                if(!stat.loaded){
-                    stat.means.fill(stat.mean);
-                    stat.loaded = true;
-                }
+            updateStats(export);
+            updateStats(imports);
 
-                //add counter, subtract how many items were taken from the core during this time
-                stat.means.add(Math.max(stat.counter, 0));
-                stat.counter = 0;
-                stat.mean = stat.means.rawMean();
-            });
-
-            if(coreItemCounts == null){
-                coreItemCounts = new int[content.items().size];
-            }
+            if(coreDeltas == null) coreDeltas = new int[content.items().size];
+            if(productionDeltas == null) productionDeltas = new int[content.items().size];
 
             //refresh core items
             for(Item item : content.items()){
-                ExportStat stat = production.get(item, ExportStat::new);
-                if(!stat.loaded){
-                    stat.means.fill(stat.mean);
-                    stat.loaded = true;
+                updateDelta(item, production, coreDeltas);
+                updateDelta(item, rawProduction, productionDeltas);
+
+                //cap production/export by production
+                production.get(item).mean = Math.min(production.get(item).mean, rawProduction.get(item).mean);
+
+                if(export.containsKey(item)){
+                    //export can, at most, be the raw items being produced from factories + the items being taken from the core
+                    export.get(item).mean = Math.min(export.get(item).mean, rawProduction.get(item).mean + Math.max(-production.get(item).mean, 0));
                 }
 
-                //get item delta
-                int delta = coreItemCounts[item.id];
-
-                //store means
-                stat.means.add(delta);
-                stat.mean = stat.means.rawMean();
+                if(imports.containsKey(item)){
+                    //import can't exceed max import rate
+                    imports.get(item).mean = Math.min(imports.get(item).mean, getImportRate(state.getPlanet(), item));
+                }
             }
 
-            Arrays.fill(coreItemCounts, 0);
+            Arrays.fill(coreDeltas, 0);
+            Arrays.fill(productionDeltas, 0);
         }
+    }
+
+    void updateStats(ObjectMap<Item, ExportStat> map){
+        map.each((item, stat) -> {
+            //initialize stat after loading
+            if(!stat.loaded){
+                stat.means.fill(stat.mean);
+                stat.loaded = true;
+            }
+
+            stat.means.add(Math.max(stat.counter, 0));
+            stat.counter = 0;
+            stat.mean = stat.means.rawMean();
+        });
+    }
+
+    void updateDelta(Item item, ObjectMap<Item, ExportStat> map, int[] deltas){
+        ExportStat stat = map.get(item, ExportStat::new);
+        if(!stat.loaded){
+            stat.means.fill(stat.mean);
+            stat.loaded = true;
+        }
+
+        //store means
+        stat.means.add(deltas[item.id]);
+        stat.mean = stat.means.rawMean();
     }
 
     public ObjectFloatMap<Item> exportRates(){
         ObjectFloatMap<Item> map = new ObjectFloatMap<>();
         export.each((item, value) -> map.put(item, value.mean));
         return map;
+    }
+
+    public boolean anyExports(){
+        if(export.size == 0) return false;
+        returnf = 0f;
+        export.each((i, e) -> returnf += e.mean);
+        return returnf >= 0.01f;
+    }
+
+    /** @return a newly allocated map with import statistics. Use sparingly. */
+    //TODO this can be a float map
+    public ObjectMap<Item, ExportStat> importStats(Planet planet){
+        ObjectMap<Item, ExportStat> imports = new ObjectMap<>();
+        eachImport(planet, sector -> sector.info.export.each((item, stat) -> imports.get(item, ExportStat::new).mean += stat.mean));
+        return imports;
+    }
+
+    /** Iterates through every sector this one imports from. */
+    public void eachImport(Planet planet, Cons<Sector> cons){
+        for(Sector sector : planet.sectors){
+            Sector dest = sector.info.destination;
+            if(sector.hasBase() && sector.info != this && dest != null && dest.info == this && sector.info.anyExports()){
+                cons.get(sector);
+            }
+        }
     }
 
     public static class ExportStat{

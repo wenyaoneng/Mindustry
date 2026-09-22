@@ -10,7 +10,7 @@ import mindustry.world.modules.ItemModule.*;
 
 import java.util.*;
 
-public class ItemSeq implements Iterable<ItemStack>, Serializable{
+public class ItemSeq implements Iterable<ItemStack>, JsonSerializable{
     protected final int[] values = new int[Vars.content.items().size];
     public int total;
 
@@ -55,6 +55,21 @@ public class ItemSeq implements Iterable<ItemStack>, Serializable{
         return out;
     }
 
+    public ItemStack[] toArray(){
+        int count = 0;
+        for(int value : values){
+            if(value != 0) count++;
+        }
+        ItemStack[] result = new ItemStack[count];
+        int index = 0;
+        for(int i = 0; i < values.length; i++){
+            if(values[i] != 0){
+                result[index ++] = new ItemStack(Vars.content.item(i), values[i]);
+            }
+        }
+        return result;
+    }
+
     public void min(int number){
         for(Item item : Vars.content.items()){
             set(item, Math.min(get(item), number));
@@ -90,6 +105,12 @@ public class ItemSeq implements Iterable<ItemStack>, Serializable{
         itemModule.each(this::add);
     }
 
+    public void add(ItemStack[] stacks){
+        for(var s : stacks){
+            add(s);
+        }
+    }
+
     public void add(ItemSeq seq){
         seq.each(this::add);
     }
@@ -103,6 +124,7 @@ public class ItemSeq implements Iterable<ItemStack>, Serializable{
     }
 
     public void add(Item item, int amount){
+        if(item.id >= values.length) return; //data patches can change item array length
         values[item.id] += amount;
         total += amount;
     }

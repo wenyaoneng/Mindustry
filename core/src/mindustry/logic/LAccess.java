@@ -17,43 +17,89 @@ public enum LAccess{
     powerNetOut,
     ammo,
     ammoCapacity,
+    currentAmmoType,
+    memoryCapacity,
     health,
     maxHealth,
     heat,
+    shield,
+    armor,
     efficiency,
+    progress,
+    timescale,
     rotation,
     x,
     y,
+    velocityX,
+    velocityY,
     shootX,
     shootY,
+    cameraX,
+    cameraY,
+    cameraWidth,
+    cameraHeight,
+    displayWidth,
+    displayHeight,
+    bufferSize,
+    operations,
+    size,
+    solid,
+    dead,
+    range,
     shooting,
+    boosting,
     mineX,
     mineY,
     mining,
+    buildX,
+    buildY,
+    pingX,
+    pingY,
+    pingText,
+    building,
+    breaking,
+    speed,
     team,
     type,
     flag,
+    flying,
     controlled,
+    controller,
     name,
-    config,
     payloadCount,
     payloadType,
+    totalPayload,
+    payloadCapacity,
+    maxUnits,
+    id,
+    selectedBlock,
+    selectedRotation,
+    bulletLifetime,
+    bulletTime,
 
     //values with parameters are considered controllable
     enabled("to"), //"to" is standard for single parameter access
     shoot("x", "y", "shoot"),
     shootp(true, "unit", "shoot"),
-    configure(true, 30, "to");
+    config(true, "to"),
+    color("to");
 
     public final String[] params;
     public final boolean isObj;
-    /** Tick cooldown between invocations. */
-    public float cooldown = -1;
+    public boolean privileged;
+
+    private static final ObjectSet<LAccess> privilegedAccess = ObjectSet.with(cameraX, cameraY, cameraWidth, cameraHeight);
 
     public static final LAccess[]
         all = values(),
-        senseable = Seq.select(all, t -> t.params.length <= 1).toArray(LAccess.class),
-        controls = Seq.select(all, t -> t.params.length > 0).toArray(LAccess.class);
+        senseable = Seq.select(all, t -> t.params.length <= 1 && !privilegedAccess.contains(t)).toArray(LAccess.class),
+        senseablePrivileged = Seq.select(all, t -> t.params.length <= 1).toArray(LAccess.class),
+        controls = Seq.select(all, t -> t.params.length > 0).toArray(LAccess.class),
+        settable = {x, y, velocityX, velocityY, rotation, speed, armor, health, shield, team, flag, totalPower, payloadType, bulletTime, bulletLifetime};
+
+    static{
+        privilegedAccess.each(l -> l.privileged = privilegedAccess.contains(l));
+    }
 
     LAccess(String... params){
         this.params = params;
@@ -62,12 +108,6 @@ public enum LAccess{
 
     LAccess(boolean obj, String... params){
         this.params = params;
-        isObj = obj;
-    }
-
-    LAccess(boolean obj, float cooldown, String... params){
-        this.params = params;
-        this.cooldown = cooldown;
         isObj = obj;
     }
 }

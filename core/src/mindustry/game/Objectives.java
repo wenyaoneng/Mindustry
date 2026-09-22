@@ -19,12 +19,20 @@ public class Objectives{
 
         @Override
         public boolean complete(){
-            return content.unlocked();
+            return content.unlockedHost();
         }
 
         @Override
         public String display(){
-            return Core.bundle.format("requirement.research", content.emoji() + " " + content.localizedName);
+            return Core.bundle.format("requirement.research",
+                //TODO broken for multi tech nodes.
+                (content.techNode == null || content.techNode.parent == null || content.techNode.parent.content.unlockedHost()) ?
+                    (content.emoji() + " " + content.localizedName) : "???");
+        }
+
+        @Override
+        public String toString(){
+            return "research: " + content;
         }
     }
 
@@ -39,16 +47,23 @@ public class Objectives{
 
         @Override
         public boolean complete(){
-            return content.unlocked();
+            return content.unlockedHost();
         }
 
         @Override
         public String display(){
-            return Core.bundle.format("requirement.produce", content.emoji() + " " + content.localizedName);
+            return Core.bundle.format("requirement.produce",
+                content.unlockedHost() ? (content.emoji() + " " + content.localizedName) : "???");
+        }
+
+        @Override
+        public String toString(){
+            return "produce: " + content;
         }
     }
 
-    public static class SectorComplete extends SectorObjective{
+    public static class SectorComplete implements Objective{
+        public SectorPreset preset;
 
         public SectorComplete(SectorPreset zone){
             this.preset = zone;
@@ -58,18 +73,68 @@ public class Objectives{
 
         @Override
         public boolean complete(){
-            return preset.sector.save != null && !preset.sector.isAttacked() && preset.sector.hasBase();
+            return preset.sector.save != null && preset.sector.isCaptured() && preset.sector.hasBase();
         }
 
         @Override
         public String display(){
             return Core.bundle.format("requirement.capture", preset.localizedName);
         }
+
+        @Override
+        public String toString(){
+            return "sectorComplete: " + preset;
+        }
     }
 
-    //TODO merge
-    public abstract static class SectorObjective implements Objective{
+    public static class OnSector implements Objective{
         public SectorPreset preset;
+
+        public OnSector(SectorPreset zone){
+            this.preset = zone;
+        }
+
+        protected OnSector(){}
+
+        @Override
+        public boolean complete(){
+            return preset.sector.hasBase();
+        }
+
+        @Override
+        public String display(){
+            return Core.bundle.format("requirement.onsector", preset.localizedName);
+        }
+
+        @Override
+        public String toString(){
+            return "onSector: " + preset;
+        }
+    }
+
+    public static class OnPlanet implements Objective{
+        public Planet planet;
+
+        public OnPlanet(Planet planet){
+            this.planet = planet;
+        }
+
+        protected OnPlanet(){}
+
+        @Override
+        public boolean complete(){
+            return planet.sectors.contains(Sector::hasBase);
+        }
+
+        @Override
+        public String display(){
+            return Core.bundle.format("requirement.onplanet", planet.localizedName);
+        }
+
+        @Override
+        public String toString(){
+            return "onPlanet: " + planet;
+        }
     }
 
     /** Defines a specific objective for a game. */
@@ -85,10 +150,6 @@ public class Objectives{
         /** Build a display for this zone requirement.*/
         default void build(Table table){
 
-        }
-
-        default SectorPreset zone(){
-            return this instanceof SectorObjective ? ((SectorObjective)this).preset : null;
         }
     }
 }

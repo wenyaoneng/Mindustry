@@ -2,13 +2,14 @@ package mindustry.ui.dialogs;
 
 import arc.*;
 import arc.files.*;
+import arc.func.*;
 import arc.graphics.*;
 import arc.graphics.Texture.*;
 import arc.input.*;
 import arc.scene.*;
 import arc.scene.event.*;
+import arc.scene.style.*;
 import arc.scene.ui.*;
-import arc.scene.ui.SettingsDialog.SettingsTable.*;
 import arc.scene.ui.TextButton.*;
 import arc.scene.ui.layout.*;
 import arc.struct.*;
@@ -16,55 +17,58 @@ import arc.util.*;
 import arc.util.io.*;
 import mindustry.content.*;
 import mindustry.content.TechTree.*;
-import mindustry.core.GameState.*;
 import mindustry.core.*;
 import mindustry.ctype.*;
 import mindustry.game.EventType.*;
 import mindustry.gen.*;
-import mindustry.graphics.*;
 import mindustry.input.*;
+import mindustry.type.*;
 import mindustry.ui.*;
 
 import java.io.*;
 import java.util.zip.*;
 
 import static arc.Core.*;
-import static mindustry.Vars.net;
 import static mindustry.Vars.*;
 
-public class SettingsMenuDialog extends SettingsDialog{
-    private SettingsTable graphics;
-    private SettingsTable game;
-    private SettingsTable sound;
+public class SettingsMenuDialog extends BaseDialog{
+    public SettingsTable graphics;
+    public SettingsTable game;
+    public SettingsTable sound;
+    public SettingsTable dev;
+    public SettingsTable main;
 
     private Table prefs;
     private Table menu;
     private BaseDialog dataDialog;
-    private boolean wasPaused;
+    private BaseDialog planetDataDialog;
+    private Planet planet = Planets.serpulo;
+    private Seq<SettingsCategory> categories = new Seq<>();
 
     public SettingsMenuDialog(){
-        hidden(() -> {
-            Sounds.back.play();
-            if(state.isGame()){
-                if(!wasPaused || net.active())
-                    state.set(State.playing);
-            }
-        });
+        super(bundle.get("settings", "Settings"));
+        addCloseButton();
+
+        cont.add(main = new SettingsTable());
+        shouldPause = true;
 
         shown(() -> {
             back();
-            if(state.isGame()){
-                wasPaused = state.is(State.paused);
-                state.set(State.paused);
-            }
-
             rebuildMenu();
         });
 
-        setFillParent(true);
-        title.setAlignment(Align.center);
-        titleTable.row();
-        titleTable.add(new Image()).growX().height(3f).pad(4f).get().setColor(Pal.accent);
+        int[] lastRebuildSize = {Core.graphics.getWidth(), Core.graphics.getHeight()};
+        onResize(() -> {
+            if(lastRebuildSize[0] != Core.graphics.getWidth() || lastRebuildSize[1] != Core.graphics.getHeight()){
+                graphics.rebuild();
+                sound.rebuild();
+                game.rebuild();
+                dev.rebuild();
+                updateScrollFocus();
+                lastRebuildSize[0] = Core.graphics.getWidth();
+                lastRebuildSize[1] = Core.graphics.getHeight();
+            }
+        });
 
         cont.clearChildren();
         cont.remove();
@@ -75,6 +79,7 @@ public class SettingsMenuDialog extends SettingsDialog{
         game = new SettingsTable();
         graphics = new SettingsTable();
         sound = new SettingsTable();
+        dev = new SettingsTable();
 
         prefs = new Table();
         prefs.top();
@@ -85,12 +90,91 @@ public class SettingsMenuDialog extends SettingsDialog{
         prefs.clearChildren();
         prefs.add(menu);
 
+        planetDataDialog = new BaseDialog("@settings.data");
+        planetDataDialog.addCloseButton();
+
+        planetDataDialog.cont.table(Tex.button, t -> {
+            t.defaults().size(280f, 60f).left();
+            TextButtonStyle style = Styles.flatt;
+
+            t.button(bundle.format("settings.planetselect", "[#" + planet.iconColor + "]" + planet.localizedName), Icon.planet, style, () -> {
+                BaseDialog dialog = new BaseDialog("");
+                dialog.cont.pane(p -> {
+                    p.background(Tex.button);
+                    int i = 0;
+
+                    for(var plan : content.planets()){
+                        if(plan.generator == null || plan.sectors.size == 0 || !plan.accessible) continue;
+
+                        p.button(plan.localizedName, Styles.flatTogglet, () -> {
+                            planet = plan;
+                            dialog.hide();
+                        }).size(110f, 45f).checked(planet == plan);
+
+                        if(++i % 4 == 0){
+                            p.row();
+                        }
+                    }
+                });
+                dialog.setFillParent(false);
+                dialog.addCloseButton();
+                dialog.show();
+            }).marginLeft(4).get().getLabel().setText(() -> bundle.format("settings.planetselect", "[#" + planet.iconColor + "]" + planet.localizedName));
+
+            t.row();
+
+            t.button("@settings.clearplanetresearch", Icon.trash, style, () -> {
+                ui.showConfirm("@confirm", bundle.format("settings.clearplanetresearch.confirm", planet.localizedName), () -> {
+                    universe.clearLoadoutInfo();
+                    for(TechNode node : TechTree.all){
+                        if(node.rootNode == planet.techTree){
+                            node.reset();
+                        }
+                    }
+                    content.each(c -> {
+                        if(c instanceof UnlockableContent u && u.databaseTabs.contains(planet)){
+                            u.clearUnlock();
+                        }
+                    });
+                    settings.remove("unlocks");
+                });
+            }).marginLeft(4);
+
+            t.row();
+
+            t.button("@settings.clearplanetcampaignsaves", Icon.trash, style, () -> {
+                ui.showConfirm("@confirm", bundle.format("settings.clearplanetcampaignsaves.confirm", planet.localizedName), () -> {
+                    planet.clearStats();
+                    boolean any = false;
+                    for(var sec : planet.sectors){
+                        sec.clearInfo();
+                        if(sec.save != null){
+                            any = true;
+                            sec.save.delete();
+                            sec.save = null;
+                        }
+                    }
+                    if(any){
+                        planet.reloadMeshAsync();
+                    }
+
+                    for(var slot : control.saves.getSaveSlots().copy()){
+                        if(slot.isSector() && slot.getSector().planet == planet){
+                            slot.delete();
+                        }
+                    }
+                });
+            }).marginLeft(4);
+
+            t.row();
+        });
+
         dataDialog = new BaseDialog("@settings.data");
         dataDialog.addCloseButton();
 
         dataDialog.cont.table(Tex.button, t -> {
             t.defaults().size(280f, 60f).left();
-            TextButtonStyle style = Styles.cleart;
+            TextButtonStyle style = Styles.flatt;
 
             t.button("@settings.cleardata", Icon.trash, style, () -> ui.showConfirm("@confirm", "@settings.clearall.confirm", () -> {
                 ObjectMap<String, Object> map = new ObjectMap<>();
@@ -110,6 +194,8 @@ public class SettingsMenuDialog extends SettingsDialog{
             })).marginLeft(4);
 
             t.row();
+
+            t.button("@settings.clearplanetdata", Icon.trash, style, () -> planetDataDialog.show()).marginLeft(4).row();
 
             t.button("@settings.clearsaves", Icon.trash, style, () -> {
                 ui.showConfirm("@confirm", "@settings.clearsaves.confirm", () -> {
@@ -139,15 +225,21 @@ public class SettingsMenuDialog extends SettingsDialog{
             t.button("@settings.clearcampaignsaves", Icon.trash, style, () -> {
                 ui.showConfirm("@confirm", "@settings.clearcampaignsaves.confirm", () -> {
                     for(var planet : content.planets()){
+                        planet.clearStats();
+                        boolean any = false;
                         for(var sec : planet.sectors){
                             sec.clearInfo();
                             if(sec.save != null){
+                                any = true;
                                 sec.save.delete();
                                 sec.save = null;
                             }
                         }
+                        if(any){
+                            planet.reloadMeshAsync();
+                        }
                     }
-                    
+
                     for(var slot : control.saves.getSaveSlots().copy()){
                         if(slot.isSector()){
                             slot.delete();
@@ -159,37 +251,22 @@ public class SettingsMenuDialog extends SettingsDialog{
             t.row();
 
             t.button("@data.export", Icon.upload, style, () -> {
-                if(ios){
-                    Fi file = Core.files.local("mindustry-data-export.zip");
-                    try{
-                        exportData(file);
-                    }catch(Exception e){
-                        ui.showException(e);
-                    }
-                    platform.shareFile(file);
-                }else{
-                    platform.showFileChooser(false, "zip", file -> {
-                        try{
-                            exportData(file);
-                            ui.showInfo("@data.exported");
-                        }catch(Exception e){
-                            e.printStackTrace();
-                            ui.showException(e);
-                        }
-                    });
-                }
+                FileChooser.export("mindustry-data-export", "zip", this::exportData);
             }).marginLeft(4);
 
             t.row();
 
-            t.button("@data.import", Icon.download, style, () -> ui.showConfirm("@confirm", "@data.import.confirm", () -> platform.showFileChooser(true, "zip", file -> {
+            t.button("@data.import", Icon.download, style, () -> ui.showConfirm("@confirm", "@data.import.confirm", () -> FileChooser.open("zip").submit(file -> {
                 try{
                     importData(file);
+                    mapPreviewDirectory.deleteDirectory();
+                    control.saves.resetSave();
+                    state = new GameState();
                     Core.app.exit();
                 }catch(IllegalArgumentException e){
                     ui.showErrorMessage("@data.invalid");
                 }catch(Exception e){
-                    e.printStackTrace();
+                    Log.err(e);
                     if(e.getMessage() == null || !e.getMessage().contains("too short")){
                         ui.showException(e);
                     }else{
@@ -209,43 +286,13 @@ public class SettingsMenuDialog extends SettingsDialog{
                 if(settings.getDataDirectory().child("crashes").list().length == 0 && !settings.getDataDirectory().child("last_log.txt").exists()){
                     ui.showInfo("@crash.none");
                 }else{
-                    if(ios){
-                        Fi logs = tmpDirectory.child("logs.txt");
-                        logs.writeString(getLogs());
-                        platform.shareFile(logs);
-                    }else{
-                        platform.showFileChooser(false, "txt", file -> {
-                            file.writeString(getLogs());
-                            app.post(() -> ui.showInfo("@crash.exported"));
-                        });
-                    }
+                    FileChooser.export("logs", "txt", file -> file.writeString(getLogs()));
                 }
             }).marginLeft(4);
         });
 
-        ScrollPane pane = new ScrollPane(prefs);
-        pane.addCaptureListener(new InputListener(){
-            @Override
-            public boolean touchDown(InputEvent event, float x, float y, int pointer, KeyCode button){
-                Element actor = pane.hit(x, y, true);
-                if(actor instanceof Slider){
-                    pane.setFlickScroll(false);
-                    return true;
-                }
-
-                return super.touchDown(event, x, y, pointer, button);
-            }
-
-            @Override
-            public void touchUp(InputEvent event, float x, float y, int pointer, KeyCode button){
-                pane.setFlickScroll(true);
-                super.touchUp(event, x, y, pointer, button);
-            }
-        });
-        pane.setFadeScrollBars(false);
-
         row();
-        add(pane).grow().top();
+        pane(prefs).grow().top();
         row();
         add(buttons).fillX();
 
@@ -267,40 +314,75 @@ public class SettingsMenuDialog extends SettingsDialog{
         return out.toString();
     }
 
+    /** Adds a custom settings category, with the icon being the specified region. */
+    public void addCategory(String name, @Nullable String region, Cons<SettingsTable> builder){
+        categories.add(new SettingsCategory(name, region == null ? null : new TextureRegionDrawable(atlas.find(region)), builder));
+    }
+
+    /** Adds a custom settings category, for use in mods. The specified consumer should add all relevant mod settings to the table. */
+    public void addCategory(String name, @Nullable Drawable icon, Cons<SettingsTable> builder){
+        categories.add(new SettingsCategory(name, icon, builder));
+    }
+
+    /** Adds a custom settings category, for use in mods. The specified consumer should add all relevant mod settings to the table. */
+    public void addCategory(String name, Cons<SettingsTable> builder){
+        addCategory(name, (Drawable)null, builder);
+    }
+
+    public Seq<SettingsCategory> getCategories(){
+        return categories;
+    }
+
     void rebuildMenu(){
         menu.clearChildren();
 
-        TextButtonStyle style = Styles.cleart;
+        TextButtonStyle style = Styles.flatt;
+
+        float marg = 8f, isize = iconMed;
 
         menu.defaults().size(300f, 60f);
-        menu.button("@settings.game", style, () -> visible(0));
-        menu.row();
-        menu.button("@settings.graphics", style, () -> visible(1));
-        menu.row();
-        menu.button("@settings.sound", style, () -> visible(2));
-        menu.row();
-        menu.button("@settings.language", style, ui.language::show);
+        menu.button("@settings.game", Icon.settings, style, isize, () -> visible(0)).marginLeft(marg).row();
+        menu.button("@settings.graphics", Icon.image, style, isize, () -> visible(1)).marginLeft(marg).row();
+        menu.button("@settings.sound", Icon.volumeUp, style, isize, () -> visible(2)).marginLeft(marg).row();
+        menu.button("@settings.language", Icon.chat, style, isize, ui.language::show).marginLeft(marg).row();
         if(!mobile || Core.settings.getBool("keyboard")){
-            menu.row();
-            menu.button("@settings.controls", style, ui.controls::show);
+            menu.button("@settings.controls", Icon.move, style, isize, ui.controls::show).marginLeft(marg).row();
         }
 
-        menu.row();
-        menu.button("@settings.data", style, () -> dataDialog.show());
+        menu.button("@settings.data", Icon.save, style, isize, () -> dataDialog.show()).marginLeft(marg).row();
+        menu.button("@settings.dev", Icon.fileCode, style, isize, () -> visible(3)).marginLeft(marg).row();
+
+        int i = 4;
+        for(var cat : categories){
+            int index = i;
+            if(cat.icon == null){
+                menu.button(cat.name, style, () -> visible(index)).marginLeft(marg).row();
+            }else{
+                menu.button(cat.name, cat.icon, style, isize, () -> visible(index)).with(b -> ((Image)b.getChildren().get(1)).setScaling(Scaling.fit)).marginLeft(marg).row();
+            }
+            i++;
+        }
     }
 
     void addSettings(){
-        sound.sliderPref("musicvol", bundle.get("setting.musicvol.name", "Music Volume"), 100, 0, 100, 1, i -> i + "%");
-        sound.sliderPref("sfxvol", bundle.get("setting.sfxvol.name", "SFX Volume"), 100, 0, 100, 1, i -> i + "%");
-        sound.sliderPref("ambientvol", bundle.get("setting.ambientvol.name", "Ambient Volume"), 100, 0, 100, 1, i -> i + "%");
+        sound.checkPref("alwaysmusic", false);
+        sound.sliderPref("musicvol", 100, 0, 100, 1, i -> i + "%");
+        sound.sliderPref("sfxvol", 100, 0, 100, 1, i -> i + "%");
+        sound.sliderPref("ambientvol", 100, 0, 100, 1, i -> i + "%");
 
-        game.screenshakePref();
+        game.sliderPref("saveinterval", 60, 10, 5 * 120, 10, i -> Core.bundle.format("setting.seconds", i));
+
         if(mobile){
             game.checkPref("autotarget", true);
-            game.checkPref("keyboard", false, val -> control.setInput(val ? new DesktopInput() : new MobileInput()));
+            game.checkPref("keyboard", false, val -> {
+                control.setInput(val ? new DesktopInput() : new MobileInput());
+                input.setUseKeyboard(val);
+            });
             if(Core.settings.getBool("keyboard")){
                 control.setInput(new DesktopInput());
+                input.setUseKeyboard(true);
             }
+
         }
         //the issue with touchscreen support on desktop is that:
         //1) I can't test it
@@ -311,13 +393,13 @@ public class SettingsMenuDialog extends SettingsDialog{
                 control.setInput(new MobileInput());
             }
         }*/
-        game.sliderPref("saveinterval", 60, 10, 5 * 120, 10, i -> Core.bundle.format("setting.seconds", i));
 
-        if(!mobile){
-            game.sliderPref("blockselecttimeout", 750, 0, 2000, 50, i -> Core.bundle.format("setting.milliseconds", i));
-
-            game.checkPref("crashreport", true);
-        }
+        game.checkPref("communityservers", true, val -> {
+            defaultServers.clear();
+            if(val){
+                JoinDialog.fetchServers();
+            }
+        });
 
         game.checkPref("savecreate", true);
         game.checkPref("blockreplace", true);
@@ -327,28 +409,51 @@ public class SettingsMenuDialog extends SettingsDialog{
         if(!mobile){
             game.checkPref("backgroundpause", true);
             game.checkPref("buildautopause", false);
+            game.checkPref("distinctcontrolgroups", true);
         }
+
+        game.checkPref("doubletapmine", false);
+        game.checkPref("commandmodehold", true);
 
         if(steam){
             game.sliderPref("playerlimit", 16, 2, 32, i -> {
                 platform.updateLobby();
                 return i + "";
             });
-
-            if(!Version.modifier.contains("beta")){
-                game.checkPref("publichost", false, i -> {
-                    platform.updateLobby();
-                });
-            }
         }
 
-        graphics.sliderPref("uiscale", 100, 25, 300, 25, s -> {
-            if(ui.settings != null){
-                Core.settings.put("uiscalechanged", true);
+        graphics.sliderPref("uiEdgePadding", 0, 0, 100, s -> s + "px", s -> {
+            if(ui != null){
+                ui.updateMargins();
+                Core.scene.resize(Core.graphics.getWidth(), Core.graphics.getHeight());
             }
+        });
+
+        int[] lastUiScale = {settings.getInt("uiscale", 100)};
+
+        graphics.sliderPref("uiscale", 100, 25, 300, 5, s -> {
+            //if the user changed their UI scale, but then put it back, don't consider it 'changed'
+            Core.settings.put("uiscalechanged", s != lastUiScale[0]);
             return s + "%";
         });
-        graphics.sliderPref("fpscap", 240, 15, 245, 5, s -> (s > 240 ? Core.bundle.get("setting.fpscap.none") : Core.bundle.format("setting.fpscap.text", s)));
+
+        graphics.sliderPref("screenshake", 4, 0, 8, i -> (i / 4f) + "x");
+
+        graphics.sliderPref("bloomintensity", 6, 0, 16, i -> (int)(i / 4f * 100f) + "%");
+        graphics.sliderPref("bloomblur", 2, 1, 16, i -> i + "x");
+
+        graphics.sliderPref("fpscap", 240, 10, 245, 5, s -> {
+            if(ios){
+                Core.graphics.setPreferredFPS(s > 240 ? 0 : s);
+            }
+            return (s > 240 ? Core.bundle.get("setting.fpscap.none") : Core.bundle.format("setting.fpscap.text", s));
+        });
+
+        if(ios){
+            int value = Core.settings.getInt("fpscap", 240);
+            Core.graphics.setPreferredFPS(value > 240 ? 0 : value);
+        }
+
         graphics.sliderPref("chatopacity", 100, 0, 100, 5, s -> s + "%");
         graphics.sliderPref("lasersopacity", 100, 0, 100, 5, s -> {
             if(ui.settings != null){
@@ -356,27 +461,32 @@ public class SettingsMenuDialog extends SettingsDialog{
             }
             return s + "%";
         });
+
+        graphics.sliderPref("unitlaseropacity", 100, 0, 100, 5, s -> s + "%");
         graphics.sliderPref("bridgeopacity", 100, 0, 100, 5, s -> s + "%");
+
+        graphics.sliderPref("maxmagnificationmultiplierpercent", 100, 100, 200, 25, s -> {
+            if(ui.settings != null){
+                Core.settings.put("maxzoomingamemultiplier", (float)s / 100.0f);
+            }
+            return s + "%";
+        });
+
+        graphics.sliderPref("minmagnificationmultiplierpercent", 100, 100, 300, 25, s -> {
+            if(ui.settings != null){
+                Core.settings.put("minzoomingamemultiplier", (float)s / 100.0f);
+            }
+            return s + "%";
+        });
 
         if(!mobile){
             graphics.checkPref("vsync", true, b -> Core.graphics.setVSync(b));
-            graphics.checkPref("fullscreen", false, b -> {
-                if(b){
-                    Core.graphics.setFullscreenMode(Core.graphics.getDisplayMode());
-                }else{
-                    Core.graphics.setWindowedMode(Core.graphics.getWidth(), Core.graphics.getHeight());
-                }
-            });
-
-            graphics.checkPref("borderlesswindow", false, b -> Core.graphics.setUndecorated(b));
+            graphics.checkPref("fullscreen", false, b -> Core.graphics.setFullscreen(b));
 
             Core.graphics.setVSync(Core.settings.getBool("vsync"));
-            if(Core.settings.getBool("fullscreen")){
-                Core.app.post(() -> Core.graphics.setFullscreenMode(Core.graphics.getDisplayMode()));
-            }
 
-            if(Core.settings.getBool("borderlesswindow")){
-                Core.app.post(() -> Core.graphics.setUndecorated(true));
+            if(Core.settings.getBool("fullscreen")){
+                Core.app.post(() -> Core.graphics.setFullscreen(true));
             }
         }else if(!ios){
             graphics.checkPref("landscape", false, b -> {
@@ -393,29 +503,32 @@ public class SettingsMenuDialog extends SettingsDialog{
         }
 
         graphics.checkPref("effects", true);
-        graphics.checkPref("atmosphere", !mobile);
+        graphics.checkPref("atmosphere", true);
+        graphics.checkPref("drawlight", true);
         graphics.checkPref("destroyedblocks", true);
         graphics.checkPref("blockstatus", false);
         graphics.checkPref("playerchat", true);
         if(!mobile){
-            graphics.checkPref("coreitems", false);
+            graphics.checkPref("coreitems", true);
         }
         graphics.checkPref("minimap", !mobile);
         graphics.checkPref("smoothcamera", true);
+        if(!mobile){
+            graphics.checkPref("detach-camera", false);
+        }
         graphics.checkPref("position", false);
+        if(!mobile){
+            graphics.checkPref("mouseposition", false);
+        }
         graphics.checkPref("fps", false);
         graphics.checkPref("playerindicators", true);
+        graphics.checkPref("showpings", true);
+        graphics.checkPref("showotherbuildplans", true);
         graphics.checkPref("indicators", true);
+        graphics.checkPref("showweather", true);
         graphics.checkPref("animatedwater", true);
-        if(Shaders.shield != null){
-            graphics.checkPref("animatedshields", !mobile);
-        }
 
-        if(!ios){
-            graphics.checkPref("bloom", true, val -> renderer.toggleBloom(val));
-        }else{
-            Core.settings.put("bloom", false);
-        }
+        graphics.checkPref("bloom", true, val -> renderer.toggleBloom(val));
 
         graphics.checkPref("pixelate", false, val -> {
             if(val){
@@ -423,6 +536,7 @@ public class SettingsMenuDialog extends SettingsDialog{
             }
         });
 
+        //iOS (and possibly Android) devices do not support linear filtering well, so disable it
         graphics.checkPref("linear", !mobile, b -> {
             for(Texture tex : Core.atlas.getTextures()){
                 TextureFilter filter = b ? TextureFilter.linear : TextureFilter.nearest;
@@ -437,11 +551,25 @@ public class SettingsMenuDialog extends SettingsDialog{
             }
         }
 
+        graphics.checkPref("skipcoreanimation", false);
+        graphics.checkPref("hidedisplays", false);
+        graphics.checkPref("logiclocalization", true);
+
+        if(OS.isMac){
+            graphics.checkPref("macnotch", false);
+        }
+
         if(!mobile){
             Core.settings.put("swapdiagonal", false);
         }
 
-        graphics.checkPref("flow", true);
+        dev.checkPref("console", false);
+        dev.checkPref("drawhitboxes", false);
+        dev.checkPref("showperformance", false);
+
+        if(!ios){
+            dev.checkPref("modcrashdisable", true);
+        }
     }
 
     public void exportData(Fi file) throws IOException{
@@ -449,16 +577,31 @@ public class SettingsMenuDialog extends SettingsDialog{
         files.add(Core.settings.getSettingsFile());
         files.addAll(customMapDirectory.list());
         files.addAll(saveDirectory.list());
-        files.addAll(screenshotDirectory.list());
         files.addAll(modDirectory.list());
         files.addAll(schematicDirectory.list());
+        files.addAll(assetCacheDirectory.list()); //important for saves
         String base = Core.settings.getDataDirectory().path();
+
+        //add directories
+        for(Fi other : files.copy()){
+            Fi parent = other.parent();
+            while(!files.contains(parent) && !parent.equals(settings.getDataDirectory())){
+                files.add(parent);
+            }
+        }
 
         try(OutputStream fos = file.write(false, 2048); ZipOutputStream zos = new ZipOutputStream(fos)){
             for(Fi add : files){
-                if(add.isDirectory()) continue;
-                zos.putNextEntry(new ZipEntry(add.path().substring(base.length())));
-                Streams.copy(add.read(), zos);
+                String path = add.path().substring(base.length());
+                if(add.isDirectory()) path += "/";
+                //fix trailing / in path
+                path = path.startsWith("/") ? path.substring(1) : path;
+                zos.putNextEntry(new ZipEntry(path));
+                if(!add.isDirectory()){
+                    try(var stream = add.read()){
+                        Streams.copy(stream, zos);
+                    }
+                }
                 zos.closeEntry();
             }
         }
@@ -476,6 +619,9 @@ public class SettingsMenuDialog extends SettingsDialog{
 
         //delete old saves so they don't interfere
         saveDirectory.deleteDirectory();
+
+        //clear old assets cache
+        assetCacheDirectory.deleteDirectory();
 
         //purge existing tmp data, keep everything else
         tmpDirectory.deleteDirectory();
@@ -497,18 +643,25 @@ public class SettingsMenuDialog extends SettingsDialog{
 
     private void visible(int index){
         prefs.clearChildren();
-        prefs.add(new Table[]{game, graphics, sound}[index]);
+
+        Seq<Table> tables = new Seq<>();
+        tables.addAll(game, graphics, sound, dev);
+        for(var custom : categories){
+            tables.add(custom.table);
+        }
+
+        prefs.add(tables.get(index));
     }
 
     @Override
     public void addCloseButton(){
-        buttons.button("@back", Icon.leftOpen, () -> {
+        buttons.button("@back", Icon.left, () -> {
             if(prefs.getChildren().first() != menu){
                 back();
             }else{
                 hide();
             }
-        }).size(230f, 64f);
+        }).size(210f, 64f);
 
         keyDown(key -> {
             if(key == KeyCode.escape || key == KeyCode.back){
@@ -519,5 +672,257 @@ public class SettingsMenuDialog extends SettingsDialog{
                 }
             }
         });
+    }
+
+    public interface StringProcessor{
+        String get(int i);
+    }
+
+    public static class SettingsCategory{
+        public String name;
+        public @Nullable Drawable icon;
+        public Cons<SettingsTable> builder;
+        public SettingsTable table;
+
+        public SettingsCategory(String name, Drawable icon, Cons<SettingsTable> builder){
+            this.name = name;
+            this.icon = icon;
+            this.builder = builder;
+
+            table = new SettingsTable();
+            builder.get(table);
+        }
+    }
+
+    public static class SettingsTable extends Table{
+        protected Seq<Setting> list = new Seq<>();
+
+        public SettingsTable(){
+            left();
+        }
+
+        public Seq<Setting> getSettings(){
+            return list;
+        }
+
+        public void pref(Setting setting){
+            list.add(setting);
+            rebuild();
+        }
+
+        public SliderSetting sliderPref(String name, int def, int min, int max, StringProcessor s){
+            return sliderPref(name, def, min, max, 1, s);
+        }
+
+        public SliderSetting sliderPref(String name, int def, int min, int max, int step, StringProcessor s){
+            return sliderPref(name, def, min, max, step, s, null);
+        }
+
+        public SliderSetting sliderPref(String name, int def, int min, int max, StringProcessor s, Intc changed){
+            return sliderPref(name, def, min, max, 1, s, changed);
+        }
+
+        public SliderSetting sliderPref(String name, int def, int min, int max, int step, StringProcessor s, Intc changed){
+            SliderSetting res;
+            list.add(res = new SliderSetting(name, def, min, max, step, s, changed));
+            settings.defaults(name, def);
+            rebuild();
+            return res;
+        }
+
+        public void checkPref(String name, boolean def){
+            list.add(new CheckSetting(name, def, null));
+            settings.defaults(name, def);
+            rebuild();
+        }
+
+        public void checkPref(String name, boolean def, Boolc changed){
+            list.add(new CheckSetting(name, def, changed));
+            settings.defaults(name, def);
+            rebuild();
+        }
+
+        public void textPref(String name, String def){
+            list.add(new TextSetting(name, def, null));
+            settings.defaults(name, def);
+            rebuild();
+        }
+
+        public void textPref(String name, String def, Cons<String> changed){
+            list.add(new TextSetting(name, def, changed));
+            settings.defaults(name, def);
+            rebuild();
+        }
+
+        public void areaTextPref(String name, String def){
+            list.add(new AreaTextSetting(name, def, null));
+            settings.defaults(name, def);
+            rebuild();
+        }
+
+        public void areaTextPref(String name, String def, Cons<String> changed){
+            list.add(new AreaTextSetting(name, def, changed));
+            settings.defaults(name, def);
+            rebuild();
+        }
+
+        public void rebuild(){
+            clearChildren();
+
+            for(Setting setting : list){
+                setting.add(this);
+            }
+
+            button(bundle.get("settings.reset", "Reset to Defaults"), () -> {
+                for(Setting setting : list){
+                    if(setting.name == null || setting.title == null) continue;
+                    settings.remove(setting.name);
+                }
+                rebuild();
+            }).margin(14).width(240f).pad(6);
+        }
+
+        public abstract static class Setting{
+            public String name;
+            public String title;
+            public @Nullable String description;
+
+            public Setting(String name){
+                this.name = name;
+                String winkey = "setting." + name + ".name.windows";
+                title = OS.isWindows && bundle.has(winkey) ? bundle.get(winkey) : bundle.get("setting." + name + ".name", name);
+                description = bundle.getOrNull("setting." + name + ".description");
+            }
+
+            public abstract void add(SettingsTable table);
+
+            public void addDesc(Element elem){
+                ui.addDescTooltip(elem, description);
+            }
+        }
+
+        public static class CheckSetting extends Setting{
+            boolean def;
+            Boolc changed;
+
+            public CheckSetting(String name, boolean def, Boolc changed){
+                super(name);
+                this.def = def;
+                this.changed = changed;
+            }
+
+            @Override
+            public void add(SettingsTable table){
+                Table box = Elems.check(title, () -> settings.getBool(name), value -> {
+                    settings.put(name, value);
+                    if(changed != null){
+                        changed.get(value);
+                    }
+                });
+
+                addDesc(table.add(box).minWidth(Math.min(500f, Core.graphics.getWidth() / 1.2f / Scl.scl(1f))).fillX().height(45f).left().padTop(7f).get());
+                table.row();
+            }
+        }
+
+        public static class SliderSetting extends Setting{
+            int def, min, max, step;
+            StringProcessor sp;
+            Intc changed;
+
+            public SliderSetting(String name, int def, int min, int max, int step, StringProcessor s, Intc changed){
+                super(name);
+                this.def = def;
+                this.min = min;
+                this.max = max;
+                this.step = step;
+                this.sp = s;
+                this.changed = changed;
+            }
+
+            @Override
+            public void add(SettingsTable table){
+                Slider slider = new Slider(min, max, step, false);
+
+                slider.setValue(settings.getInt(name));
+
+                Label value = new Label("", Styles.outlineLabel);
+                Table content = new Table();
+                content.add(title, Styles.outlineLabel).left().growX().wrap();
+                content.add(value).padLeft(10f).right();
+                content.margin(3f, 33f, 3f, 33f);
+                content.touchable = Touchable.disabled;
+
+                slider.changed(() -> {
+                    settings.put(name, (int)slider.getValue());
+                    value.setText(sp.get((int)slider.getValue()));
+                    if(changed != null) changed.get((int)slider.getValue());
+                });
+
+                slider.change();
+
+                addDesc(table.stack(slider, content).width(Math.min(Core.graphics.getWidth() / 1.2f / Scl.scl(1f), 500f)).left().padTop(4f).get());
+                table.row();
+            }
+        }
+
+        public static class TextSetting extends Setting{
+            String def;
+            Cons<String> changed;
+
+            public TextSetting(String name, String def, Cons<String> changed){
+                super(name);
+                this.def = def;
+                this.changed = changed;
+            }
+
+            @Override
+            public void add(SettingsTable table){
+                TextField field = new TextField();
+
+                field.update(() -> field.setText(settings.getString(name)));
+
+                field.changed(() -> {
+                    settings.put(name, field.getText());
+                    if(changed != null){
+                        changed.get(field.getText());
+                    }
+                });
+
+                Table prefTable = table.table().left().padTop(3f).get();
+                prefTable.add(field);
+                prefTable.label(() -> title);
+                addDesc(prefTable);
+                table.row();
+            }
+        }
+
+        public static class AreaTextSetting extends TextSetting{
+            public AreaTextSetting(String name, String def, Cons<String> changed){
+                super(name, def, changed);
+            }
+
+            @Override
+            public void add(SettingsTable table){
+                TextArea area = new TextArea("");
+                area.setPrefRows(5);
+
+                area.update(() -> {
+                    area.setText(settings.getString(name));
+                    area.setWidth(table.getWidth());
+                });
+
+                area.changed(() -> {
+                    settings.put(name, area.getText());
+                    if(changed != null){
+                        changed.get(area.getText());
+                    }
+                });
+
+                addDesc(table.label(() -> title).left().padTop(3f).get());
+                table.row().add(area).left();
+                table.row();
+            }
+        }
     }
 }
